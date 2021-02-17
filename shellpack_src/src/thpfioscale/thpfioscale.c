@@ -18,8 +18,8 @@
 #include <sys/types.h>
 #include <sys/syscall.h>
 
-#define PAGESIZE getpagesize()
-#define HPAGESIZE (1048576*2)
+#define PAGESIZE page_size
+#define HPAGESIZE hpage_size
 #define __ALIGN_MASK(x, mask)    (((x) + (mask)) & ~(mask))
 #define ALIGN(x, a)            __ALIGN_MASK(x, (typeof(x))(a) - 1)
 #define PTR_ALIGN(p, a)         ((typeof(p))ALIGN((unsigned long)(p), (a)))
@@ -30,6 +30,8 @@ size_t thread_size;
 unsigned long *anon_init;
 int nr_hpages;
 int madvise_huge;
+size_t page_size;
+size_t hpage_size;
 
 /* barrier for all threads to finish initialisation on */
 static pthread_barrier_t init_barrier;
@@ -48,6 +50,34 @@ static inline int current_nid() {
 #else
 	return -1;
 #endif
+}
+
+static void setup_page_sizes()
+{
+#ifdef __powerpc64__
+	char line[128];
+	FILE *f;
+	int rc;
+
+	f = fopen("/proc/cpuinfo", "r");
+	if (!f) {
+		perror("CPU info");
+		exit(EXIT_FAILURE);
+	}
+
+	hpage_size = 1048576 * 2;
+	while (fgets(line, sizeof(line), f) != NULL) {
+		if (!strcmp(line, "MMU		: Hash\n")) {
+			hpage_size = 1048576 * 16;
+			break;
+		}
+	}
+
+	fclose(f);
+#else
+	hpage_size = 1048576 * 2;
+#endif
+	page_size = getpagesize();
 }
 
 struct fault_timing {
@@ -142,6 +172,7 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
+	setup_page_sizes();
 	nr_threads = atoi(argv[1]);
 	total_size = atol(argv[2]);
 	madvise_huge = atoi(argv[3]);
